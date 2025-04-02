@@ -20,24 +20,30 @@ jobs:
 
       - name: Setup environment
         run: |
-          # 安装最新版 Wrangler 避免版本问题
           npm install --no-save wrangler@latest
-          echo "CLOUDFLARE_API_TOKEN 长度: ${#CLOUDFLARE_API_TOKEN}"
           echo "PROJECT_NAME: $PROJECT_NAME"
 
       - name: Cleanup Domains
         run: |
-          # 获取项目关联的自定义域名并逐个删除
-          domains=$(npx wrangler pages project list-domains $PROJECT_NAME --json | jq -r '.[].name')
-          for domain in $domains; do
-            echo "删除域名: $domain"
-            npx wrangler pages project delete-domain $PROJECT_NAME $domain || true
-            sleep 3
-          done
+          # 获取项目自定义域名（使用文本处理替代JSON）
+          domains=$(npx wrangler pages project view $PROJECT_NAME | grep -oP 'Custom Domains:\s*\K.*' | tr ',' '\n' | sed 's/ //g')
+          
+          if [ -z "$domains" ]; then
+            echo "没有找到关联的自定义域名"
+          else
+            echo "找到域名: $domains"
+            for domain in $domains; do
+              if [ -n "$domain" ]; then
+                echo "正在删除域名: $domain"
+                npx wrangler pages project delete-domain $PROJECT_NAME $domain || echo "删除失败（可能已不存在）"
+                sleep 3
+              fi
+            done
+          fi
 
       - name: Delete Existing Project
         run: |
-          npx wrangler pages project delete $PROJECT_NAME || true
+          npx wrangler pages project delete $PROJECT_NAME || echo "项目删除失败（可能不存在）"
           sleep 5
 
       - name: Create New Project
@@ -47,20 +53,9 @@ jobs:
             --compatibility-flags=nodejs_compat
 
       - name: Deploy Application
-        run: |
-          max_retries=3
-          attempt=1
-          while [ $attempt -le $max_retries ]; do
-            if pnpm run deploy:pages; then
-              exit 0
-            fi
-            echo "⚠️ Attempt $attempt failed, retrying in 15 seconds..."
-            sleep 15
-            ((attempt++))
-          done
-          exit 1
+        run: pnpm run deploy:pages
 
       - name: Verify Deployment
         run: |
-          echo "部署验证:"
+          echo "部署状态:"
           npx wrangler pages deployment list --project-name=$PROJECT_NAME
