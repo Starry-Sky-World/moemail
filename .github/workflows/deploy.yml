@@ -9,84 +9,58 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install Dependencies
+      - name: Setup environment
         run: |
-          pnpm install --frozen-lockfile
+          # 安装最新版 Wrangler 避免版本问题
           npm install --no-save wrangler@latest
+          echo "CLOUDFLARE_API_TOKEN 长度: ${#CLOUDFLARE_API_TOKEN}"
+          echo "PROJECT_NAME: $PROJECT_NAME"
 
-      - name: Prepare Project
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+      - name: Cleanup Domains
         run: |
-          # 清理可能的冲突项目
+          # 获取项目关联的自定义域名并逐个删除
+          domains=$(npx wrangler pages project list-domains $PROJECT_NAME --json | jq -r '.[].name')
+          for domain in $domains; do
+            echo "删除域名: $domain"
+            npx wrangler pages project delete-domain $PROJECT_NAME $domain || true
+            sleep 3
+          done
+
+      - name: Delete Existing Project
+        run: |
           npx wrangler pages project delete $PROJECT_NAME || true
           sleep 5
-          
-          # 创建新项目
-          npx wrangler pages project create $PROJECT_NAME --production-branch=main
-          sleep 3
 
-      - name: Run Deployment
-        id: deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+      - name: Create New Project
+        run: |
+          npx wrangler pages project create $PROJECT_NAME \
+            --production-branch=main \
+            --compatibility-flags=nodejs_compat
+
+      - name: Deploy Application
         run: |
           max_retries=3
           attempt=1
-          
           while [ $attempt -le $max_retries ]; do
-            echo "⌛ Attempt $attempt/$max_retries"
-            
-            # 验证项目状态
-            if npx wrangler pages project list | grep -q "$PROJECT_NAME"; then
-              echo "✅ Project verified"
-              if pnpm run deploy:pages; then
-                echo "🚀 Deployment successful"
-                exit 0
-              fi
+            if pnpm run deploy:pages; then
+              exit 0
             fi
-            
-            echo "⚠️ Retrying in 15 seconds..."
+            echo "⚠️ Attempt $attempt failed, retrying in 15 seconds..."
             sleep 15
             ((attempt++))
           done
-          
-          echo "❌ All attempts failed"
           exit 1
 
-      - name: Debug on Failure
-        if: failure()
+      - name: Verify Deployment
         run: |
-          echo "=== DEBUG INFO ==="
-          echo "Project Name: ${{ secrets.PROJECT_NAME }}"
-          echo "Account ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-          echo "Wrangler Version: $(npx wrangler --version)"
-          echo "Current Projects:"
-          npx wrangler pages project list
-          echo "Logs:"
-          cat ~/.config/.wrangler/logs/wrangler-*.log || echo "No logs found"
-
-      - name: Cleanup
-        run: |
-          rm -f .env*.*
-          rm -f wrangler*.json
+          echo "部署验证:"
+          npx wrangler pages deployment list --project-name=$PROJECT_NAME
