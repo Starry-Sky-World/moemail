@@ -49,7 +49,9 @@ jobs:
           AUTH_GITHUB_ID: ${{ secrets.AUTH_GITHUB_ID }}
           AUTH_GITHUB_SECRET: ${{ secrets.AUTH_GITHUB_SECRET }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-        run: pnpm dlx tsx scripts/deploy/index.ts
+        run: |
+          npm install --save-dev wrangler@4
+          pnpm dlx tsx scripts/deploy/index.ts
 
       # 如果部署失败，输出 Wrangler 日志
       - name: Output Wrangler logs on failure
