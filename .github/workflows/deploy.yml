@@ -29,10 +29,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify Pages Project
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           echo "验证 Pages 项目是否存在: ${{ secrets.PROJECT_NAME }}"
           pnpm dlx wrangler@latest pages project list
-          pnpm dlx wrangler@latest pages project view ${{ secrets.PROJECT_NAME }}
+          pnpm dlx wrangler@latest pages project view ${{ secrets.PROJECT_NAME }} || echo "项目不存在，将在部署阶段创建"
 
       - name: Run deploy with retries
         id: deploy
@@ -51,9 +54,9 @@ jobs:
           while [ $attempt -le $max_retries ]; do
             echo "⌛ 尝试部署 (第 $attempt 次/$max_retries)"
             
-            # 先验证项目是否存在
+            # 先验证/创建项目
             if ! pnpm dlx wrangler pages project view $PROJECT_NAME; then
-              echo "⚠️ 项目不存在，尝试创建..."
+              echo "🆕 创建 Pages 项目..."
               pnpm dlx wrangler pages project create $PROJECT_NAME --production-branch=main
             fi
             
