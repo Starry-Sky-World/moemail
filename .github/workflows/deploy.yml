@@ -28,65 +28,63 @@ jobs:
       - name: Install Dependencies
         run: |
           pnpm install --frozen-lockfile
-          # 单独安装最新版 Wrangler 避免冲突
           npm install --no-save wrangler@latest
 
-      - name: Verify Pages Project
+      - name: Prepare Project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
         run: |
-          echo "验证 Pages 项目状态..."
-          npx wrangler pages project list | grep "${{ secrets.PROJECT_NAME }}" || echo "项目不存在"
+          # 清理可能的冲突项目
+          npx wrangler pages project delete $PROJECT_NAME || true
+          sleep 5
+          
+          # 创建新项目
+          npx wrangler pages project create $PROJECT_NAME --production-branch=main
+          sleep 3
 
-      - name: Run deploy with retries
+      - name: Run Deployment
         id: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
-          # 其他环境变量...
         run: |
           max_retries=3
           attempt=1
           
           while [ $attempt -le $max_retries ]; do
-            echo "⌛ 尝试部署 (第 $attempt 次/$max_retries)"
+            echo "⌛ Attempt $attempt/$max_retries"
             
-            # 使用 npx 确保调用的是最新安装的 wrangler
+            # 验证项目状态
             if npx wrangler pages project list | grep -q "$PROJECT_NAME"; then
-              echo "✅ 项目已存在"
-            else
-              echo "🆕 创建 Pages 项目..."
-              npx wrangler pages project create "$PROJECT_NAME" --production-branch=main || true
+              echo "✅ Project verified"
+              if pnpm run deploy:pages; then
+                echo "🚀 Deployment successful"
+                exit 0
+              fi
             fi
             
-            # 执行部署
-            if pnpm dlx tsx scripts/deploy/index.ts; then
-              echo "✅ 部署成功"
-              exit 0
-            else
-              echo "⚠️ 部署失败，等待 15 秒后重试..."
-              sleep 15
-              ((attempt++))
-            fi
+            echo "⚠️ Retrying in 15 seconds..."
+            sleep 15
+            ((attempt++))
           done
           
-          echo "❌ 已达到最大重试次数，部署失败"
+          echo "❌ All attempts failed"
           exit 1
 
-      - name: Debug on failure
+      - name: Debug on Failure
         if: failure()
         run: |
-          echo "=== 调试信息 ==="
-          echo "PROJECT_NAME: ${{ secrets.PROJECT_NAME }}"
-          echo "CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-          echo "Wrangler 版本: $(npx wrangler --version)"
-          echo "当前目录: $(pwd)"
-          echo "环境文件内容:"
-          cat .env.runtime || echo "无.env.runtime文件"
-          echo "Wrangler 日志:"
-          cat ~/.config/.wrangler/logs/wrangler-*.log || echo "无Wrangler日志"
+          echo "=== DEBUG INFO ==="
+          echo "Project Name: ${{ secrets.PROJECT_NAME }}"
+          echo "Account ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          echo "Wrangler Version: $(npx wrangler --version)"
+          echo "Current Projects:"
+          npx wrangler pages project list
+          echo "Logs:"
+          cat ~/.config/.wrangler/logs/wrangler-*.log || echo "No logs found"
 
       - name: Cleanup
         run: |
